@@ -114,6 +114,7 @@ class PackFilePanel(BasePanel):
         args: list[str] = ["pack", "file", src, out]
         if not self._compress.get():
             args.append("--no-compress")
+        args.append("--skip-verification")
         if temp := self._temp_folder.get().strip():
             args += ["--temp-folder", temp]
         self._run_mkpfs(args)
