@@ -121,6 +121,7 @@ class BasePanel(ctk.CTkFrame):
         # pushes structured tuples here instead of writing \r-delimited stderr.
         self._progress_queue: queue.Queue = queue.Queue()
         self._queued_progress: QueuedProgress = QueuedProgress(self._progress_queue)
+        self._max_progress_events_per_poll: int = 64
         self._progress.stop()
         self._progress.set(0)
 
@@ -271,39 +272,40 @@ class BasePanel(ctk.CTkFrame):
 
     def _drain_progress_events(self) -> None:
         """Drain progress events from the progress queue and update widgets."""
+        latest_step: tuple[Any, ...] | None = None
+        latest_status: str | None = None
+        events_read: int = 0
         try:
-            while True:
+            while events_read < self._max_progress_events_per_poll:
                 action, *args = self._progress_queue.get_nowait()
+                events_read += 1
                 if action == "step":
-                    phase_name, done, total, _bytes_processed = args
-                    # Emit a log line when a phase completes (done reaches total)
-                    # or when the phase changes to a new one.
-                    if phase_name != self._last_phase and self._last_phase:
-                        prev_done, prev_total = self._last_progress
-                        pct: int = int(prev_done / prev_total * 100) if prev_total > 0 else 100
-                        self._emit(f"✓ {self._last_phase}: {pct}%", "success")
-                    self._last_phase = phase_name
-                    self._last_progress = (done, total)
-                    # Switch to determinate mode on first progress event
-                    if self._progress.cget("mode") != "determinate":
-                        self._progress.stop()
-                        self._progress.configure(mode="determinate")
-                        self._progress.set(0)
-                    if total > 0:
-                        ratio = done / total
-                    else:
-                        ratio = 0.0
-                    # Clamp ratio to [0.0, 1.0] to guard against out-of-range listener values
-                    ratio = max(0.0, min(1.0, ratio))
-                    self._progress.set(ratio)
-                    # Update phase label with the current operation name
-                    if phase_name:
-                        self._phase_label.configure(text=phase_name)
+                    latest_step = tuple(args)
                 elif action == "status":
-                    (message,) = args
-                    self._phase_label.configure(text=message.strip())
+                    latest_status = str(args[0]).strip()
         except queue.Empty:
             pass
+
+        # Compression can generate progress events faster than Tk can paint.
+        # Render only the newest values so the event loop stays responsive.
+        if latest_step is not None:
+            phase_name, done, total, _bytes_processed = latest_step
+            if phase_name != self._last_phase and self._last_phase:
+                prev_done, prev_total = self._last_progress
+                pct: int = int(prev_done / prev_total * 100) if prev_total > 0 else 100
+                self._emit(f"✓ {self._last_phase}: {pct}%", "success")
+            self._last_phase = phase_name
+            self._last_progress = (done, total)
+            if self._progress.cget("mode") != "determinate":
+                self._progress.stop()
+                self._progress.configure(mode="determinate")
+                self._progress.set(0)
+            ratio: float = done / total if total > 0 else 0.0
+            self._progress.set(max(0.0, min(1.0, ratio)))
+            if phase_name:
+                self._phase_label.configure(text=phase_name)
+        if latest_status is not None:
+            self._phase_label.configure(text=latest_status)
 
     def _on_export_log(self) -> None:
         """Open a save dialog and write the current log content to a file."""
