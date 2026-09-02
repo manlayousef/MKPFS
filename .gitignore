@@ -17,6 +17,11 @@
 # Editor / local config
 .idea/
 .vscode/
+.vs/
+.fleet/
+.project
+.settings/
+.history/
 .copier-answers.yml
 .env
 .env.*
@@ -38,6 +43,10 @@
 .netrc
 .npmrc
 .aws/
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
 .ruff_cache/
 
 # Legacy code
@@ -52,6 +61,35 @@
 *.tmp
 !/tmp/.gitkeep
 /plan-*.md
+
+# Python environments and tooling
+.venv/
+venv/
+env/
+ENV/
+pip-wheel-metadata/
+.python-version
+.pyright/
+.mypy_cache/
+.pytest_cache/
+.hypothesis/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+unit.xml
+htmlcov/
+
+# Build and packaging output
+build/
+dist/
+*.egg-info/
+*.egg
+*.whl
+*.tar.gz
+*.zip
+*.manifest
 
 # Unit tests
 unit.xml
@@ -160,7 +198,6 @@ MANIFEST
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
-*.spec
 
 # Installer logs
 pip-log.txt

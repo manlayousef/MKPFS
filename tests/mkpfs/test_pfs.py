@@ -23,6 +23,7 @@ from mkpfs.pfs import (
     DirNode,
     FileNode,
     Inode,
+    _safe_extract_target,
     build_pfs,
     extract_pfs_image,
     fpt_hash,
@@ -3314,6 +3315,24 @@ class TestScanExcludesOsMetadata(PfsTestCase):
         rels = set(files.keys())
         self.assertEqual(rels, {"sce_sys/param.json", "eboot.bin"})
         self.assertFalse(any("MACOSX" in r or "DS_Store" in r or r.startswith("._") or "Thumbs" in r for r in rels))
+
+
+class TestSafeExtractTarget(unittest.TestCase):
+    def test_rejects_paths_that_escape_destination(self) -> None:
+        """Extraction must reject traversal and absolute image paths."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path: Path = Path(temp_dir) / "output"
+            with self.assertRaises(ValueError):
+                _safe_extract_target(output_path=output_path, relative_path="../outside.txt")
+            with self.assertRaises(ValueError):
+                _safe_extract_target(output_path=output_path, relative_path="/outside.txt")
+
+    def test_resolves_normal_path_inside_destination(self) -> None:
+        """Valid image paths resolve below the extraction destination."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path: Path = Path(temp_dir) / "output"
+            target: Path = _safe_extract_target(output_path=output_path, relative_path="folder/file.bin")
+            self.assertEqual(target, (output_path / "folder/file.bin").resolve())
 
 
 class TestExtractOptimization(PfsTestCase):

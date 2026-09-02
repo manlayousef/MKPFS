@@ -6720,6 +6720,29 @@ def _normalize_extract_selectors(selectors: list[str] | None) -> list[str] | Non
     return cleaned or None
 
 
+def _safe_extract_target(*, output_path: Path, relative_path: str) -> Path:
+    """Resolve an image path and ensure it stays inside the extraction directory.
+
+    Args:
+        output_path: Extraction destination directory.
+        relative_path: Image-controlled POSIX-relative path.
+
+    Returns:
+        Resolved destination path inside ``output_path``.
+
+    Raises:
+        ValueError: If the image path is absolute or escapes the destination.
+    """
+    candidate_path: Path = Path(relative_path)
+    if candidate_path.is_absolute() or ".." in candidate_path.parts:
+        raise ValueError(f"unsafe extraction path: {relative_path!r}")
+    output_root: Path = output_path.resolve()
+    target_path: Path = (output_root / candidate_path).resolve(strict=False)
+    if not _path_is_relative_to(path=target_path, other=output_root):
+        raise ValueError(f"unsafe extraction path: {relative_path!r}")
+    return target_path
+
+
 def extract_exfat_image(
     image: Path,
     output_path: Path,
@@ -6772,10 +6795,22 @@ def extract_exfat_image(
     dirs = [d for d in dirs if _selected(d.rel_path)]
     files = [f for f in files if _selected(f.rel_path)]
 
+    try:
+        directory_targets: list[Path] = [
+            _safe_extract_target(output_path=output_path, relative_path=directory.rel_path) for directory in dirs
+        ]
+        file_targets: list[tuple[ExfatEntry, Path]] = [
+            (file_entry, _safe_extract_target(output_path=output_path, relative_path=file_entry.rel_path))
+            for file_entry in files
+        ]
+    except ValueError as exc:
+        result.errors.append(str(exc))
+        return result
+
     output_path.mkdir(parents=True, exist_ok=True)
 
-    for directory in dirs:
-        (output_path / directory.rel_path).mkdir(parents=True, exist_ok=True)
+    for target in directory_targets:
+        target.mkdir(parents=True, exist_ok=True)
         result.directories_created += 1
 
     if selectors_norm is not None:
@@ -6790,8 +6825,7 @@ def extract_exfat_image(
     if progress is not None:
         progress.status(f"\nExtracting {len(files)} files from exFAT image to {output_path}...")
 
-    for file_entry in files:
-        target: Path = output_path / file_entry.rel_path
+    for file_entry, target in file_targets:
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
             with target.open("wb") as out_fh:
@@ -6880,8 +6914,20 @@ def _extract_inner_exfat(
         dirs = [d for d in dirs if _selected(d.rel_path)]
         files = [f for f in files if _selected(f.rel_path)]
 
-        for directory in dirs:
-            (output_path / directory.rel_path).mkdir(parents=True, exist_ok=True)
+        try:
+            directory_targets: list[Path] = [
+                _safe_extract_target(output_path=output_path, relative_path=directory.rel_path) for directory in dirs
+            ]
+            file_targets: list[tuple[ExfatEntry, Path]] = [
+                (file_entry, _safe_extract_target(output_path=output_path, relative_path=file_entry.rel_path))
+                for file_entry in files
+            ]
+        except ValueError as exc:
+            result.errors.append(str(exc))
+            return result
+
+        for target in directory_targets:
+            target.mkdir(parents=True, exist_ok=True)
             result.directories_created += 1
 
         if selectors_norm is not None:
@@ -6895,8 +6941,7 @@ def _extract_inner_exfat(
         update_interval: int = 8 * 1024 * 1024
         if progress is not None:
             progress.status(f"\nExtracting {len(files)} files from inner exFAT to {output_path}...")
-        for file_entry in files:
-            target: Path = output_path / file_entry.rel_path
+        for file_entry, target in file_targets:
             target.parent.mkdir(parents=True, exist_ok=True)
             try:
                 with target.open("wb") as out_fh:
@@ -6985,18 +7030,22 @@ def extract_pfs_image(
         result.errors.append(f"output path exists and is not a directory: {output_path}")
         return result
 
-    directory_targets: list[Path] = [
-        output_path / Path(rel_dir)
-        for rel_dir in sorted(
-            inspection.dir_inodes.keys(),
-            key=lambda value: (value.count("/"), value.lower(), value),
-        )
-        if rel_dir != ""
-    ]
-    file_targets: list[tuple[str, Path, int]] = [
-        (rel_path, output_path / Path(rel_path), inode_num)
-        for rel_path, inode_num in sorted(inspection.file_inodes.items())
-    ]
+    try:
+        directory_targets: list[Path] = [
+            _safe_extract_target(output_path=output_path, relative_path=rel_dir)
+            for rel_dir in sorted(
+                inspection.dir_inodes.keys(),
+                key=lambda value: (value.count("/"), value.lower(), value),
+            )
+            if rel_dir != ""
+        ]
+        file_targets: list[tuple[str, Path, int]] = [
+            (rel_path, _safe_extract_target(output_path=output_path, relative_path=rel_path), inode_num)
+            for rel_path, inode_num in sorted(inspection.file_inodes.items())
+        ]
+    except ValueError as exc:
+        result.errors.append(str(exc))
+        return result
 
     for directory_target in directory_targets:
         if directory_target.exists() and not directory_target.is_dir():
