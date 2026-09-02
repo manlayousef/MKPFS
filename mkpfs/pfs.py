@@ -4472,7 +4472,9 @@ def build_pfs_stream_single_file(
             ekpfs=resolved_ekpfs if encrypted else None,
             new_crypt=new_crypt,
         )
-        shutil.move(str(tmp_path), str(output_path))
+        os.replace(tmp_path, output_path)
+        if not output_path.is_file():
+            raise BuildError(f"output image was not created at {output_path}")
         progress.status(f"Successfully wrote {human_readable_size(final_ndblock * block_size)} image")
     except Exception:
         # Remove the partial temp image on any failure, then re-raise the original error.

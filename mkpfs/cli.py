@@ -482,6 +482,9 @@ def prompt_overwrite(output_path: Path) -> bool:
     if not output_path.exists():
         return True
 
+    if not output_path.is_file():
+        raise BuildError(f"output path exists but is not a file: {output_path}")
+
     info(f"Output file already exists: {output_path}")
     while True:
         response = input("Overwrite? [Y/n] ").strip().lower()
