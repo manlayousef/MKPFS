@@ -228,6 +228,9 @@ class BasePanel(ctk.CTkFrame):
                 if tag == "error":
                     self._failed = True
                     self._log.append(text, tag)
+                elif tag == "__state__":
+                    if text == "verifying":
+                        self._run_btn.configure(text=tr("verifying"))
                 elif tag == "__done__":
                     self._busy = False
                     self._run_btn.configure(state="normal", text=tr("run"))
@@ -265,8 +268,6 @@ class BasePanel(ctk.CTkFrame):
 
                         self._reset_after_id = self.after(3000, _reset_progress)
                 else:
-                    if text.lower().startswith("running post-pack"):
-                        self._run_btn.configure(text=tr("verifying"))
                     self._log.append(text, tag)
         except queue.Empty:
             pass
@@ -398,6 +399,8 @@ class BasePanel(ctk.CTkFrame):
                         tag = "error"
                     elif lower.startswith("warn ") or "\u26a0" in stripped:
                         tag = "warning"
+                    if lower.startswith("running post-pack"):
+                        self._tag_fn("verifying", "__state__")
                     self._tag_fn(stripped, tag)
                 return len(s)
 
