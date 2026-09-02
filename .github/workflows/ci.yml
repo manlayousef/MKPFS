@@ -6,17 +6,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 on:
-  push:
-    branches:
-      - main
-      - master
-    tags:
-      - '**'
-  pull_request:
-    branches:
-      - '**'
-  release:
-    types: [published, prereleased, created, edited]
+  workflow_dispatch:
 jobs:
   build:
     name: 📦 Builds the Python package
