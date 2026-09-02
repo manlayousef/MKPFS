@@ -4472,7 +4472,7 @@ def build_pfs_stream_single_file(
             ekpfs=resolved_ekpfs if encrypted else None,
             new_crypt=new_crypt,
         )
-        os.replace(tmp_path, output_path)
+        tmp_path.replace(output_path)
         if not output_path.is_file():
             raise BuildError(f"output image was not created at {output_path}")
         progress.status(f"Successfully wrote {human_readable_size(final_ndblock * block_size)} image")
