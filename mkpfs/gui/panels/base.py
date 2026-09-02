@@ -265,6 +265,8 @@ class BasePanel(ctk.CTkFrame):
 
                         self._reset_after_id = self.after(3000, _reset_progress)
                 else:
+                    if text.lower().startswith("running post-pack"):
+                        self._run_btn.configure(text=tr("verifying"))
                     self._log.append(text, tag)
         except queue.Empty:
             pass
