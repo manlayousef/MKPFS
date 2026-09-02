@@ -62,6 +62,8 @@ class BasePanel(ctk.CTkFrame):
         super().__init__(parent, fg_color="transparent")
         self._busy: bool = False
         self._failed: bool = False
+        self._cancelled: bool = False
+        self._cancel_event: threading.Event = threading.Event()
         self._worker_finished: threading.Event = threading.Event()
         self._completion_handled: bool = False
         self._reset_after_id: str | None = None
@@ -134,14 +136,23 @@ class BasePanel(ctk.CTkFrame):
         self._progress.stop()
         self._progress.set(0)
 
-        # Run button in panel's accent colour
+        action_row: ctk.CTkFrame = ctk.CTkFrame(self, fg_color="transparent")
+        action_row.pack(padx=24, pady=(10, 0), anchor="e")
         self._run_btn: NeonButton = NeonButton(
             self,
             text=tr("run"),
             command=self._on_run,
             color=self._accent,
         )
-        self._run_btn.pack(padx=24, pady=(10, 0), anchor="e")
+        self._run_btn.pack(side="left")
+        self._cancel_btn: NeonButton = NeonButton(
+            action_row,
+            text=tr("cancel"),
+            command=self._on_cancel,
+            color="#B84A5A",
+        )
+        self._cancel_btn.pack(side="left", padx=(8, 0))
+        self._cancel_btn.configure(state="disabled")
 
         # Log header row: label + export button side by side
         log_header: ctk.CTkFrame = ctk.CTkFrame(self, fg_color="transparent")
@@ -178,6 +189,7 @@ class BasePanel(ctk.CTkFrame):
         self._title_label.configure(text=tr(self._title_key))
         self._subtitle_label.configure(text=tr(self._subtitle_key))
         self._run_btn.set_label(tr("run"))
+        self._cancel_btn.set_label(tr("cancel"))
         self._log_section_label.configure(text=tr("output_log"))
         self._export_btn.configure(text=tr("export_log"))
 
@@ -208,6 +220,8 @@ class BasePanel(ctk.CTkFrame):
             self.after_cancel(self._reset_after_id)
             self._reset_after_id = None
         self._failed = False
+        self._cancelled = False
+        self._cancel_event.clear()
         self._worker_finished.clear()
         self._completion_handled = False
         self._last_phase = ""
@@ -215,18 +229,32 @@ class BasePanel(ctk.CTkFrame):
         self._log.clear()
         self._busy = True
         self._run_btn.configure(state="disabled", text=tr("running"))
+        self._cancel_btn.configure(state="normal")
         self._progress.start()
         threading.Thread(target=self._worker, daemon=True).start()
 
     def _worker(self) -> None:
         """Wrap _run_command and signal completion back to the UI thread."""
         try:
+            token = _pbar.cancel_event.set(self._cancel_event)
             self._run_command()
+        except _pbar.OperationCancelled:
+            self._cancelled = True
+            self._log_queue.put(("cancelled", tr("cancelled")))
         except Exception as exc:
             self._log_queue.put(("error", tr("err_unexpected").format(exc)))
         finally:
+            _pbar.cancel_event.reset(token)
             self._worker_finished.set()
             self._log_queue.put(("__done__", ""))
+
+    def _on_cancel(self) -> None:
+        """Request cancellation and keep controls locked until cleanup finishes."""
+        if not self._busy or self._cancel_event.is_set():
+            return
+        self._cancel_event.set()
+        self._cancel_btn.configure(state="disabled", text=tr("cancelling"))
+        self._phase_label.configure(text=tr("cancelling"))
 
     def _poll_log_queue(self) -> None:
         """Drain the log queue and update the UI; reschedules itself."""
@@ -240,6 +268,8 @@ class BasePanel(ctk.CTkFrame):
                 if tag == "error":
                     self._failed = True
                     self._log.append(text, tag)
+                elif tag == "cancelled":
+                    self._log.append(text, "warning")
                 elif tag == "__state__":
                     if text == "verifying":
                         self._run_btn.configure(text=tr("verifying"))
@@ -260,6 +290,14 @@ class BasePanel(ctk.CTkFrame):
         self._completion_handled = True
         self._busy = False
         self._run_btn.configure(state="normal", text=tr("run"))
+        self._cancel_btn.configure(state="disabled", text=tr("cancel"))
+        if self._cancelled:
+            self._progress.stop()
+            self._progress.configure(mode="indeterminate")
+            self._progress.set(0)
+            self._progress_count_label.configure(text="")
+            self._phase_label.configure(text=tr("cancelled"))
+            return
         if self._failed:
             self._progress.stop()
             self._progress.configure(mode="indeterminate")
@@ -453,6 +491,8 @@ class BasePanel(ctk.CTkFrame):
                 exit_code = int(cli_mkpfs_main(args))
         except SystemExit as exc:
             exit_code = int(exc.code) if exc.code is not None else 0
+        except _pbar.OperationCancelled:
+            raise
         except Exception as exc:
             self._emit(f"✗ Unexpected error: {exc}", "error")
             return

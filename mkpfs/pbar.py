@@ -6,6 +6,7 @@ This module provides the Progress class used by CLI build flows.
 from __future__ import annotations
 
 import sys
+import threading
 import time
 
 # Module-level progress listener hook.
@@ -17,6 +18,11 @@ from typing import Any, Callable
 from .utils import human_readable_size
 
 default_listener: ContextVar[Callable[..., Any] | None] = ContextVar("default_listener", default=None)
+cancel_event: ContextVar[threading.Event | None] = ContextVar("cancel_event", default=None)
+
+
+class OperationCancelled(Exception):
+    """Raised when a GUI operation receives a cancellation request."""
 
 
 class Progress:
@@ -56,6 +62,10 @@ class Progress:
             bytes_processed: Optional number of bytes processed; when provided
                 the progress will display byte-based throughput and ETA.
         """
+        requested_cancel: threading.Event | None = cancel_event.get(None)
+        if requested_cancel is not None and requested_cancel.is_set():
+            raise OperationCancelled
+
         # Normalize/clamp numeric inputs so both terminal and GUI listeners
         # receive consistent, in-range values (prevents ratios > 1).
         total = max(total, 1)
@@ -127,6 +137,10 @@ class Progress:
         write is suppressed — the listener already routes the message to the
         UI thread via ``_progress_queue``.
         """
+        requested_cancel: threading.Event | None = cancel_event.get(None)
+        if requested_cancel is not None and requested_cancel.is_set():
+            raise OperationCancelled
+
         # Fire structured listener (GUI).
         if self.listener:
             self.listener("status", message)
