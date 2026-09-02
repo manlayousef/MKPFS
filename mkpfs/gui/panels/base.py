@@ -62,6 +62,8 @@ class BasePanel(ctk.CTkFrame):
         super().__init__(parent, fg_color="transparent")
         self._busy: bool = False
         self._failed: bool = False
+        self._worker_finished: threading.Event = threading.Event()
+        self._completion_handled: bool = False
         self._reset_after_id: str | None = None
         self._log_queue: queue.Queue[tuple[str, str]] = queue.Queue()
         self._accent: str = _PANEL_ACCENT.get(self._panel_key, _NEON_BLUE)
@@ -115,6 +117,13 @@ class BasePanel(ctk.CTkFrame):
             text_color=_NEON_BLUE,
         )
         self._phase_label.pack(anchor="w", padx=26, pady=(0, 4))
+        self._progress_count_label: ctk.CTkLabel = ctk.CTkLabel(
+            self,
+            text="",
+            font=_FONT_SMALL,
+            text_color=_TEXT_MUTED,
+        )
+        self._progress_count_label.pack(anchor="e", padx=26, pady=(0, 4))
 
         # Progress event queue — QueuedProgress is registered as the module-level
         # listener so every background-phase Progress.step() / status() call
@@ -199,6 +208,8 @@ class BasePanel(ctk.CTkFrame):
             self.after_cancel(self._reset_after_id)
             self._reset_after_id = None
         self._failed = False
+        self._worker_finished.clear()
+        self._completion_handled = False
         self._last_phase = ""
         self._last_progress = (0, 0)
         self._log.clear()
@@ -214,6 +225,7 @@ class BasePanel(ctk.CTkFrame):
         except Exception as exc:
             self._log_queue.put(("error", tr("err_unexpected").format(exc)))
         finally:
+            self._worker_finished.set()
             self._log_queue.put(("__done__", ""))
 
     def _poll_log_queue(self) -> None:
@@ -232,46 +244,51 @@ class BasePanel(ctk.CTkFrame):
                     if text == "verifying":
                         self._run_btn.configure(text=tr("verifying"))
                 elif tag == "__done__":
-                    self._busy = False
-                    self._run_btn.configure(state="normal", text=tr("run"))
-                    if self._failed:
-                        # On failure, reset immediately — no celebratory 100%
-                        self._progress.stop()
-                        self._progress.configure(mode="indeterminate")
-                        self._progress.set(0)
-                        self._phase_label.configure(text="")
-                    else:
-                        # Emit a final log line for the last completed phase
-                        if self._last_phase:
-                            prev_done, prev_total = self._last_progress
-                            pct: int = int(prev_done / prev_total * 100) if prev_total > 0 else 100
-                            self._log.append(f"✓ {self._last_phase}: {pct}%", "success")
-                        # Freeze progress bar at 100% and show completion label briefly
-                        self._progress.stop()
-                        self._progress.configure(mode="determinate")
-                        self._progress.set(1)
-                        current_label = self._phase_label.cget("text")
-                        if current_label:
-                            self._phase_label.configure(text=f"✓ {current_label}")
-                        else:
-                            self._phase_label.configure(text="✓ " + tr("ok"))
-                        # Reset progress bar after a delay so the final 100% state is visible
-
-                        def _reset_progress() -> None:
-                            try:
-                                self._progress.stop()
-                                self._progress.configure(mode="indeterminate")
-                                self._progress.set(0)
-                                self._phase_label.configure(text="")
-                            except Exception:
-                                pass  # Widget may be destroyed during shutdown
-
-                        self._reset_after_id = self.after(3000, _reset_progress)
+                    self._finish_worker()
                 else:
                     self._log.append(text, tag)
         except queue.Empty:
             pass
+        if self._busy and self._worker_finished.is_set():
+            self._finish_worker()
         self.after(80, self._poll_log_queue)
+
+    def _finish_worker(self) -> None:
+        """Restore controls exactly once after the background worker exits."""
+        if self._completion_handled:
+            return
+        self._completion_handled = True
+        self._busy = False
+        self._run_btn.configure(state="normal", text=tr("run"))
+        if self._failed:
+            self._progress.stop()
+            self._progress.configure(mode="indeterminate")
+            self._progress.set(0)
+            self._phase_label.configure(text="")
+            self._progress_count_label.configure(text="")
+            return
+        if self._last_phase:
+            prev_done, prev_total = self._last_progress
+            pct: int = int(prev_done / prev_total * 100) if prev_total > 0 else 100
+            self._log.append(f"✓ {self._last_phase}: {pct}%", "success")
+        self._progress.stop()
+        self._progress.configure(mode="determinate")
+        self._progress.set(1)
+        self._progress_count_label.configure(text="100%")
+        current_label = self._phase_label.cget("text")
+        self._phase_label.configure(text=f"✓ {current_label}" if current_label else "✓ " + tr("ok"))
+
+        def _reset_progress() -> None:
+            try:
+                self._progress.stop()
+                self._progress.configure(mode="indeterminate")
+                self._progress.set(0)
+                self._phase_label.configure(text="")
+                self._progress_count_label.configure(text="")
+            except Exception:
+                pass
+
+        self._reset_after_id = self.after(3000, _reset_progress)
 
     def _drain_progress_events(self) -> None:
         """Drain progress events from the progress queue and update widgets."""
@@ -299,6 +316,7 @@ class BasePanel(ctk.CTkFrame):
                 self._emit(f"✓ {self._last_phase}: {pct}%", "success")
             self._last_phase = phase_name
             self._last_progress = (done, total)
+            self._progress_count_label.configure(text=f"{done:,} / {total:,}")
             if self._progress.cget("mode") != "determinate":
                 self._progress.stop()
                 self._progress.configure(mode="determinate")
